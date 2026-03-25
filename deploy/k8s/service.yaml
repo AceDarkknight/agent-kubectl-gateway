@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent-kubectl-gateway
+  labels:
+    app: agent-kubectl-gateway
+spec:
+  type: NodePort
+  ports:
+  - port: 8078
+    targetPort: 8078
+    protocol: TCP
+    name: http
+    nodePort: 30078
+  selector:
+    app: agent-kubectl-gateway

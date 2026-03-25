@@ -1,0 +1,80 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-kubectl-gateway
+  labels:
+    app: agent-kubectl-gateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: agent-kubectl-gateway
+  template:
+    metadata:
+      labels:
+        app: agent-kubectl-gateway
+    spec:
+      containers:
+      - name: agent-kubectl-gateway
+        image: agent-kubectl-gateway:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8078
+          name: http
+          protocol: TCP
+        env:
+        - name: AUTH_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: agent-kubectl-gateway-secret
+              key: auth-token
+              optional: true
+        - name: KUBECONFIG
+          value: /app/kubeconfig
+        volumeMounts:
+        - name: config
+          mountPath: /app/configs
+          readOnly: true
+        - name: kubeconfig
+          mountPath: /app/kubeconfig
+          readOnly: true
+          subPath: kubeconfig
+        - name: audit-log
+          mountPath: /app/log
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8078
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8078
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 3
+        resources:
+          requests:
+            memory: 128Mi
+            cpu: 100m
+          limits:
+            memory: 256Mi
+            cpu: 500m
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          readOnlyRootFilesystem: false
+      volumes:
+      - name: config
+        configMap:
+          name: agent-kubectl-gateway-config
+      - name: kubeconfig
+        secret:
+          secretName: agent-kubectl-gateway-kubeconfig
+          optional: true
+      - name: audit-log
+        emptyDir: {}

@@ -1,0 +1,67 @@
+server:
+  port: 8078
+  host: "0.0.0.0"
+  tls_cert: ""
+  tls_key: ""
+
+# 认证配置
+auth:
+  token: ""
+
+audit:
+  log_file: "./log/audit.log"
+  audit_file: "./log/audit_detail.log"
+  level: "info"
+  format: "json"
+  max_size_mb: 100
+  max_backups: 30
+  max_age_days: 30
+  compress: true
+
+execution:
+  max_output_length: 10000
+  timeout_seconds: 30
+  max_concurrent: 10
+
+rules:
+  # 动词白名单：允许执行的 kubectl 操作动词
+  # 注意：白名单优先级高于黑名单，如果配置了白名单，则只允许白名单中的动词
+  verb_allowlist:
+    - "get"
+    - "describe"
+    - "logs"
+    - "apply"
+    - "create"
+    - "patch"
+    - "rollout"
+    - "scale"
+    - "top"
+
+  # 动词黑名单：禁止执行的 kubectl 操作动词
+  # 注意：黑名单仅在未配置白名单时生效
+  verb_blocklist:
+    - "delete"
+    - "exec"
+    - "port-forward"
+
+  # 脱敏规则：对特定资源的输出进行脱敏
+  masking:
+    - resource: "secrets"
+      namespaces: ["*"]
+      action: "mask"
+
+    # 字段过滤规则：移除特定的 JSONPath/YAML 字段
+    - resource: "*"
+      namespaces: ["*"]
+      action: "filter_fields"
+      fields:
+        - "metadata.annotations.kubectl.kubernetes.io/last-applied-configuration"
+        - "metadata.managedFields"
+        - "metadata.creationTimestamp"
+        - "status"
+      description: "过滤掉 kubectl last-applied-configuration 注解、managedFields、creationTimestamp 和 status 字段，减小返回体积"
+
+# 限流配置
+rate_limit:
+  requests_per_second: 10
+  burst: 20
