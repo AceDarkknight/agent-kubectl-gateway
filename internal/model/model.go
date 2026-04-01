@@ -5,13 +5,13 @@ import "time"
 // ExecutionRequest represents the request from AI Agent to execute kubectl command.
 // 结构化输入，从根本上避免 Shell 注入。
 type ExecutionRequest struct {
-	Verb        string   `json:"verb" binding:"required"`     // kubectl 操作动词，如 get, describe, logs, apply, create 等
-	Resource    string   `json:"resource" binding:"required"` // Kubernetes 资源类型，如 pods, deployments, services 等
-	Namespace   string   `json:"namespace"`                   // 命名空间，如 default, kube-system。集群级别资源可为空
-	Name        string   `json:"name"`                        // 资源名称，查询所有资源时可为空
-	Subresource string   `json:"subresource"`                 // 子资源类型，如 log, status, scale 等
-	Options     *Options `json:"options"`                     // 命令选项参数
-	Mode        string   `json:"mode" binding:"required"`     // 输入模式，固定为 structured
+	Verb        string   `json:"verb" binding:"required"` // kubectl 操作动词，如 get, describe, logs, apply, create 等
+	Resource    string   `json:"resource"`                // Kubernetes 资源类型，如 pods, deployments, services 等（logs 命令可选）
+	Namespace   string   `json:"namespace"`               // 命名空间，如 default, kube-system。集群级别资源可为空
+	Name        string   `json:"name"`                    // 资源名称，查询所有资源时可为空
+	Subresource string   `json:"subresource"`             // 子资源类型，如 log, status, scale 等
+	Options     *Options `json:"options"`                 // 命令选项参数
+	Mode        string   `json:"mode" binding:"required"` // 输入模式，固定为 structured
 }
 
 // Options represents the command options for kubectl.

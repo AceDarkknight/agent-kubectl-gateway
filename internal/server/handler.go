@@ -76,6 +76,16 @@ func (h *Handler) Execute(c *gin.Context) {
 		zap.String("namespace", req.Namespace),
 		zap.String("output", output))
 
+	// 2.1 业务校验：非 logs 命令必须传 resource
+	if req.Verb != "logs" && req.Resource == "" {
+		audit.Warn("[Handler] 非 logs 命令缺少 resource 参数", zap.String("verb", req.Verb))
+		c.JSON(http.StatusBadRequest, model.ExecutionResult{
+			Status:        "failed",
+			BlockedReason: "resource is required for verb '" + req.Verb + "'",
+		})
+		return
+	}
+
 	// 3. 构建执行请求
 	execReq := &executor.ExecutionRequest{
 		ExecutionRequest: req,

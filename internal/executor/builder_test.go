@@ -45,7 +45,18 @@ func TestBuilder_BuildArgs(t *testing.T) {
 					Follow:    true,
 				},
 			},
-			expected: []string{"logs", "pods", "my-pod", "--tail", "100", "-c", "my-container", "-f"},
+			expected: []string{"logs", "my-pod", "--tail", "100", "-c", "my-container", "-f"},
+		},
+		{
+			name: "Logs without resource (pod name only)",
+			req: &model.ExecutionRequest{
+				Verb: "logs",
+				Name: "my-pod",
+				Options: &model.Options{
+					TailLines: 50,
+				},
+			},
+			expected: []string{"logs", "my-pod", "--tail", "50"},
 		},
 		{
 			name: "Get with label selector and output json",

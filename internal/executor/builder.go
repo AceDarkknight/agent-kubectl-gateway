@@ -18,14 +18,23 @@ func NewBuilder() *Builder {
 func (b *Builder) BuildArgs(req *model.ExecutionRequest) []string {
 	args := []string{req.Verb}
 
-	// 添加资源类型
-	if req.Resource != "" {
-		args = append(args, req.Resource)
-	}
+	// kubectl logs 的特殊处理：不需要添加资源类型，直接用 pod 名称
+	// 正确格式：kubectl logs <pod-name> 或 kubectl logs <resource>/<name>
+	// 错误格式：kubectl logs pods <pod-name> （会把 pods 当作 pod 名）
+	if req.Verb == "logs" {
+		if req.Name != "" {
+			args = append(args, req.Name)
+		}
+	} else {
+		// 添加资源类型
+		if req.Resource != "" {
+			args = append(args, req.Resource)
+		}
 
-	// 添加资源名称
-	if req.Name != "" {
-		args = append(args, req.Name)
+		// 添加资源名称
+		if req.Name != "" {
+			args = append(args, req.Name)
+		}
 	}
 
 	// 添加子资源
