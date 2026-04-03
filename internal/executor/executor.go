@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os/exec"
 	"strings"
 	"time"
@@ -15,12 +16,29 @@ import (
 	"go.uber.org/zap"
 )
 
+// CommandRunner 接口定义了命令执行的抽象，便于单元测试。
+// 接受 io.Writer 参数以支持 limitedWriter 的死锁防护机制。
+type CommandRunner interface {
+	Run(ctx context.Context, stdout, stderr io.Writer, name string, args ...string) error
+}
+
+// RealCommandRunner 是实际执行命令的实现。
+type RealCommandRunner struct{}
+
+func (r *RealCommandRunner) Run(ctx context.Context, stdout, stderr io.Writer, name string, args ...string) error {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	return cmd.Run()
+}
+
 // Executor executes kubectl commands.
 type Executor struct {
 	config    *config.Config
 	builder   *Builder
 	maxOutput int
 	timeout   time.Duration
+	runner    CommandRunner
 }
 
 // ExecutionRequest represents the request for execution.
@@ -30,7 +48,8 @@ type ExecutionRequest struct {
 	RequestID string
 }
 
-// limitedWriter 是一个带截断功能的 Writer，用于安全地捕获命令输出
+// limitedWriter 是一个带截断功能的 Writer，用于安全地捕获命令输出。
+// 核心价值：即使输出超出限制，Write 仍然返回成功，防止命令因 stdout 缓冲区满而死锁。
 type limitedWriter struct {
 	buf       strings.Builder
 	maxLen    int
@@ -74,6 +93,7 @@ func NewExecutor(cfg *config.Config) *Executor {
 		builder:   NewBuilder(),
 		maxOutput: cfg.Execution.MaxOutputLength,
 		timeout:   time.Duration(cfg.Execution.TimeoutSeconds) * time.Second,
+		runner:    &RealCommandRunner{},
 	}
 }
 
@@ -114,20 +134,17 @@ func (e *Executor) Execute(ctx context.Context, req *ExecutionRequest) (*model.E
 
 	// 4. 执行命令
 	audit.Info("[Executor] 开始执行 kubectl 命令")
-	cmd := exec.CommandContext(timeoutCtx, "kubectl", args...)
 
 	// 使用 limitedWriter 替代 io.Pipe()，避免死锁
 	// 标准库会自动并发排空 stdout/stderr 管道
 	stdoutWriter := &limitedWriter{maxLen: e.maxOutput}
-	cmd.Stdout = stdoutWriter
-
 	var stderrBuf strings.Builder
-	cmd.Stderr = &stderrBuf
 
 	start := time.Now()
 
-	// 5. 执行命令（标准库自动处理管道排空，绝无死锁）
-	err := cmd.Run()
+	// 使用注入的 runner 执行，stdout/stderr 写入 limitedWriter
+	err := e.runner.Run(timeoutCtx, stdoutWriter, &stderrBuf, "kubectl", args...)
+
 	duration := time.Since(start)
 
 	stdoutStr := stdoutWriter.String()
@@ -142,7 +159,7 @@ func (e *Executor) Execute(ctx context.Context, req *ExecutionRequest) (*model.E
 		zap.Int("stdout_size", len(stdoutStr)),
 		zap.Int("stderr_size", len(stderrStr)))
 
-	// 6. 结果组装
+	// 5. 结果组装
 	audit.Debug("[Executor] 开始组装结果")
 	result := &model.ExecutionResult{
 		RequestID:    req.RequestID,
