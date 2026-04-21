@@ -11,6 +11,7 @@ type ExecutionRequest struct {
 	Name        string   `json:"name"`                    // 资源名称，查询所有资源时可为空
 	Subresource string   `json:"subresource"`             // 子资源类型，如 log, status, scale 等
 	Options     *Options `json:"options"`                 // 命令选项参数
+	Output      string   `json:"output"`                  // 输出格式，如 json, yaml, wide, name
 	Mode        string   `json:"mode" binding:"required"` // 输入模式，固定为 structured
 }
 
@@ -24,8 +25,7 @@ type Options struct {
 	Since         string `json:"since"`         // 时间范围，如 1h, 30m
 	Follow        bool   `json:"follow"`        // 是否持续跟踪日志输出
 	Previous      bool   `json:"previous"`      // 是否获取前一个容器的日志
-	AllNamespaces bool   `json:"allNamespaces"` // 是否查询所有命名空间
-	Output        string `json:"output"`        // 输出格式，如 json, yaml, wide, name
+	AllNamespaces bool `json:"allNamespaces"` // 是否查询所有命名空间
 }
 
 // ExecutionResult represents the result of kubectl command execution.

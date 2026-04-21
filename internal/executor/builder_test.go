@@ -63,9 +63,9 @@ func TestBuilder_BuildArgs(t *testing.T) {
 			req: &model.ExecutionRequest{
 				Verb:     "get",
 				Resource: "deployments",
+				Output:   "json",
 				Options: &model.Options{
 					LabelSelector: "app=backend",
-					Output:        "json",
 					Limit:         10,
 				},
 			},

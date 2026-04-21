@@ -38,9 +38,7 @@ func TestFilterResult(t *testing.T) {
 			req: &model.ExecutionRequest{
 				Resource:  "secrets",
 				Namespace: "default",
-				Options: &model.Options{
-					Output: "json",
-				},
+				Output:    "json",
 			},
 			result: &model.ExecutionResult{
 				Status: "success",
@@ -53,9 +51,7 @@ func TestFilterResult(t *testing.T) {
 			req: &model.ExecutionRequest{
 				Resource:  "secrets",
 				Namespace: "default",
-				Options: &model.Options{
-					Output: "yaml",
-				},
+				Output:    "yaml",
 			},
 			result: &model.ExecutionResult{
 				Status: "success",
@@ -71,9 +67,7 @@ data:
 			req: &model.ExecutionRequest{
 				Resource:  "pods",
 				Namespace: "default",
-				Options: &model.Options{
-					Output: "json",
-				},
+				Output:    "json",
 			},
 			result: &model.ExecutionResult{
 				Status: "success",
@@ -86,9 +80,7 @@ data:
 			req: &model.ExecutionRequest{
 				Resource:  "secrets",
 				Namespace: "default",
-				Options: &model.Options{
-					Output: "json",
-				},
+				Output:    "json",
 			},
 			result: &model.ExecutionResult{
 				Status: "failed",

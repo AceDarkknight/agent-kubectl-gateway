@@ -28,14 +28,10 @@ func NewFilter(cfg *config.RulesConfig) *Filter {
 
 // FilterResult filters the execution result.
 func (f *Filter) FilterResult(req *model.ExecutionRequest, result *model.ExecutionResult) *model.ExecutionResult {
-	outputFormat := ""
-	if req.Options != nil {
-		outputFormat = req.Options.Output
-	}
 	audit.Info("[Filter] 开始过滤结果",
 		zap.String("resource", req.Resource),
 		zap.String("namespace", req.Namespace),
-		zap.String("output_format", outputFormat),
+		zap.String("output_format", req.Output),
 		zap.Int("original_size", len(result.Stdout)))
 
 	// 如果命令执行失败或被拦截，不进行过滤
@@ -57,9 +53,9 @@ func (f *Filter) FilterResult(req *model.ExecutionRequest, result *model.Executi
 				zap.String("action", rule.Action))
 			switch rule.Action {
 			case "mask":
-				filteredStdout = f.maskContent(filteredStdout, outputFormat)
+				filteredStdout = f.maskContent(filteredStdout, req.Output)
 			case "filter_fields":
-				filteredStdout = f.filterFields(filteredStdout, rule.Fields, outputFormat)
+				filteredStdout = f.filterFields(filteredStdout, rule.Fields, req.Output)
 			}
 		}
 	}

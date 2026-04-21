@@ -159,6 +159,8 @@ make build
   "namespace": "default",
   "name": "",
   "subresource": "",
+  "output": "json",
+  "mode": "structured",
   "options": {
     "labelSelector": "app=nginx",
     "fieldSelector": "",
@@ -168,11 +170,8 @@ make build
     "since": "",
     "follow": false,
     "previous": false,
-    "allNamespaces": false,
-    "output": "json"
-  },
-  "output": "json",
-  "mode": "structured"
+    "allNamespaces": false
+  }
 }
 ```
 
@@ -254,9 +253,7 @@ curl -X POST http://localhost:8080/execute \
     "verb": "apply",
     "resource": "-f",
     "namespace": "default",
-    "options": {
-      "output": "yaml"
-    },
+    "output": "yaml",
     "mode": "structured"
   }'
 ```
@@ -474,17 +471,12 @@ audit:
             "type": "boolean",
             "description": "是否查询所有命名空间",
             "default": false
-          },
-          "output": {
-            "type": "string",
-            "description": "输出格式，如 json, yaml, wide, name",
-            "default": ""
           }
         }
       },
       "output": {
         "type": "string",
-        "description": "输出格式，如 json, yaml, wide, name。优先级高于 options.output",
+        "description": "输出格式，如 json, yaml, wide, name",
         "default": ""
       },
       "mode": {

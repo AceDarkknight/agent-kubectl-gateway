@@ -59,11 +59,14 @@ func (b *Builder) BuildArgs(req *model.ExecutionRequest) []string {
 			args = append(args, "--field-selector", req.Options.FieldSelector)
 		}
 
-		// 输出格式
-		if req.Options.Output != "" {
-			args = append(args, "-o", req.Options.Output)
-		}
+	}
 
+	// 输出格式
+	if req.Output != "" {
+		args = append(args, "-o", req.Output)
+	}
+
+	if req.Options != nil {
 		// 日志相关参数
 		if req.Verb == "logs" {
 			if req.Options.TailLines > 0 {

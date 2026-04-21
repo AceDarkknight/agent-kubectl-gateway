@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import json
+import os
 import sys
 import urllib.request
 import urllib.error
 
-GATEWAY_URL = ""
-TOKEN = ""
+GATEWAY_URL = os.environ.get("GATEWAY_BASE_URL", "")
+TOKEN = os.environ.get("GATEWAY_AUTH_TOKEN", "")
 test_results = {"passed": 0, "failed": 0, "tests": []}
 
 def send_structured_request(verb, resource, namespace="", name="", output="", subresource=""):
@@ -22,14 +23,14 @@ def send_structured_request(verb, resource, namespace="", name="", output="", su
     if subresource:
         payload["subresource"] = subresource
     if output:
-        payload["options"] = {"output": output}
+        payload["output"] = output
     
     payload_bytes = json.dumps(payload).encode("utf-8")
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {TOKEN}"
     }
-    req = urllib.request.Request(GATEWAY_URL, data=payload_bytes, headers=headers, method="POST")
+    req = urllib.request.Request(f"{GATEWAY_URL}/execute", data=payload_bytes, headers=headers, method="POST")
     try:
         with urllib.request.urlopen(req, timeout=60) as response:
             return json.loads(response.read().decode("utf-8"))
@@ -230,7 +231,7 @@ def test_rate_limiting():
             "Content-Type": "application/json",
             "Authorization": f"Bearer {TOKEN}"
         }
-        req = urllib.request.Request(GATEWAY_URL, data=payload_bytes, headers=headers, method="POST")
+        req = urllib.request.Request(f"{GATEWAY_URL}/execute", data=payload_bytes, headers=headers, method="POST")
         try:
             with urllib.request.urlopen(req, timeout=60) as response:
                 status_code = response.status

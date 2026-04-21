@@ -66,15 +66,11 @@ func (h *Handler) Execute(c *gin.Context) {
 		})
 		return
 	}
-	output := ""
-	if req.Options != nil {
-		output = req.Options.Output
-	}
 	audit.Info("[Handler] 请求参数解析完成",
 		zap.String("verb", req.Verb),
 		zap.String("resource", req.Resource),
 		zap.String("namespace", req.Namespace),
-		zap.String("output", output))
+		zap.String("output", req.Output))
 
 	// 2.1 业务校验：非 logs 命令必须传 resource
 	if req.Verb != "logs" && req.Resource == "" {

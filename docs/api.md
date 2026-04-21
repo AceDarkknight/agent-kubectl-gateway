@@ -88,6 +88,7 @@ HTTP 状态码：`401 Unauthorized`
   "namespace": "<命名空间>",
   "name": "<资源名称>",
   "subresource": "<子资源类型>",
+  "output": "<输出格式>",
   "mode": "structured",
   "options": {
     "labelSelector": "<标签选择器>",
@@ -98,8 +99,7 @@ HTTP 状态码：`401 Unauthorized`
     "since": "<时间范围>",
     "follow": <是否跟踪>,
     "previous": <是否获取前一个容器日志>,
-    "allNamespaces": <是否查询所有命名空间>,
-    "output": "<输出格式>"
+    "allNamespaces": <是否查询所有命名空间>
   }
 }
 ```
@@ -121,6 +121,7 @@ HTTP 状态码：`401 Unauthorized`
 | `namespace` | string | 命名空间，集群级别资源可为空 | `default`, `kube-system` |
 | `name` | string | 资源名称，查询所有资源时可为空 | `my-app-pod` |
 | `subresource` | string | 子资源类型 | `log`, `status`, `scale` |
+| `output` | string | 输出格式 | `json`, `yaml`, `wide`, `name` |
 
 ##### Options 参数说明
 
@@ -135,7 +136,6 @@ HTTP 状态码：`401 Unauthorized`
 | `follow` | bool | 是否持续跟踪日志输出 | `false`（注意：网关不支持流式响应，建议使用 `false`） |
 | `previous` | bool | 是否获取前一个容器的日志 | `false` |
 | `allNamespaces` | bool | 是否查询所有命名空间 | `true` |
-| `output` | string | 输出格式 | `json`, `yaml`, `wide`, `name` |
 
 ---
 
@@ -245,10 +245,8 @@ curl -X POST http://localhost:8078/execute \
     "verb": "get",
     "resource": "pods",
     "namespace": "default",
-    "mode": "structured",
-    "options": {
-      "output": "json"
-    }
+    "output": "json",
+    "mode": "structured"
   }'
 ```
 
@@ -289,6 +287,21 @@ curl -X POST http://localhost:8078/execute \
   }'
 ```
 
+**响应：**
+
+```json
+{
+  "request_id": "req-12345678",
+  "status": "success",
+  "exit_code": 0,
+  "stdout": "2026-03-16T10:00:00Z INFO Server started\n2026-03-16T10:00:01Z INFO Processing request...",
+  "stderr": "",
+  "truncated": false,
+  "duration_ms": 80,
+  "response_size_bytes": 512
+}
+```
+
 ### 示例 3：使用标签选择器查询 Deployment
 
 **请求：**
@@ -301,12 +314,27 @@ curl -X POST http://localhost:8078/execute \
     "verb": "get",
     "resource": "deployments",
     "namespace": "production",
+    "output": "yaml",
     "mode": "structured",
     "options": {
-      "labelSelector": "app=nginx,tier=frontend",
-      "output": "yaml"
+      "labelSelector": "app=nginx,tier=frontend"
     }
   }'
+```
+
+**响应：**
+
+```json
+{
+  "request_id": "req-12345678",
+  "status": "success",
+  "exit_code": 0,
+  "stdout": "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: nginx-deployment\n...",
+  "stderr": "",
+  "truncated": false,
+  "duration_ms": 120,
+  "response_size_bytes": 1536
+}
 ```
 
 ### 示例 4：描述 Service 详情
@@ -326,6 +354,21 @@ curl -X POST http://localhost:8078/execute \
   }'
 ```
 
+**响应：**
+
+```json
+{
+  "request_id": "req-12345678",
+  "status": "success",
+  "exit_code": 0,
+  "stdout": "Name:              my-service\nNamespace:         default\nSelector:          app=my-app\nType:              ClusterIP\n...",
+  "stderr": "",
+  "truncated": false,
+  "duration_ms": 95,
+  "response_size_bytes": 1024
+}
+```
+
 ### 示例 5：查询所有命名空间的 Pod
 
 **请求：**
@@ -337,12 +380,27 @@ curl -X POST http://localhost:8078/execute \
   -d '{
     "verb": "get",
     "resource": "pods",
+    "output": "wide",
     "mode": "structured",
     "options": {
-      "allNamespaces": true,
-      "output": "wide"
+      "allNamespaces": true
     }
   }'
+```
+
+**响应：**
+
+```json
+{
+  "request_id": "req-12345678",
+  "status": "success",
+  "exit_code": 0,
+  "stdout": "NAMESPACE     NAME                     READY   STATUS    RESTARTS   AGE\ndefault       nginx-pod                1/1     Running   0          2d\nkube-system   calico-node-xxx          1/1     Running   0          39d",
+  "stderr": "",
+  "truncated": false,
+  "duration_ms": 110,
+  "response_size_bytes": 896
+}
 ```
 
 ### 示例 6：获取 Secret（敏感数据将被脱敏）
@@ -358,10 +416,8 @@ curl -X POST http://localhost:8078/execute \
     "resource": "secrets",
     "namespace": "default",
     "name": "my-secret",
-    "mode": "structured",
-    "options": {
-      "output": "json"
-    }
+    "output": "json",
+    "mode": "structured"
   }'
 ```
 
