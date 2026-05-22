@@ -35,3 +35,9 @@ go.work.sum
 # .idea/
 # .vscode/
 coverage
+
+.sisyphus/
+
+# Python bytecode cache
+__pycache__/
+*.pyc

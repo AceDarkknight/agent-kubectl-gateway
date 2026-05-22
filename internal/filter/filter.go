@@ -3,12 +3,15 @@ package filter
 import (
 	"encoding/json"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/AceDarkknight/agent-kubectl-gateway/internal/audit"
 	"github.com/AceDarkknight/agent-kubectl-gateway/internal/config"
 	"github.com/AceDarkknight/agent-kubectl-gateway/internal/model"
 
+	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 	"go.uber.org/zap"
 
 	"go.yaml.in/yaml/v3"
@@ -56,6 +59,8 @@ func (f *Filter) FilterResult(req *model.ExecutionRequest, result *model.Executi
 				filteredStdout = f.maskContent(filteredStdout, req.Output)
 			case "filter_fields":
 				filteredStdout = f.filterFields(filteredStdout, rule.Fields, req.Output)
+			case "strip_defaults":
+				filteredStdout = f.stripDefaults(filteredStdout, req.Output, req.Resource)
 			}
 		}
 	}
@@ -128,8 +133,8 @@ func (f *Filter) maskJSONContent(content string) string {
 		return content
 	}
 
-	// 检查是否是 List 结构，如果是则遍历 items 数组处理每个资源
-	if kind, ok := data["kind"].(string); ok && kind == "List" {
+	// 检查是否是 List 结构（PodList/DeploymentList/SecretList 等），如果是则遍历 items 数组处理每个资源
+	if kind, ok := data["kind"].(string); ok && strings.HasSuffix(kind, "List") {
 		if items, ok := data["items"].([]interface{}); ok {
 			for _, item := range items {
 				if itemMap, ok := item.(map[string]interface{}); ok {
@@ -142,8 +147,8 @@ func (f *Filter) maskJSONContent(content string) string {
 		f.maskSingleResource(data)
 	}
 
-	// 序列化回 JSON
-	result, err := json.MarshalIndent(data, "", "  ")
+	// 序列化回 compact JSON（无缩进，节省 token）
+	result, err := json.Marshal(data)
 	if err != nil {
 		return content
 	}
@@ -180,8 +185,8 @@ func (f *Filter) maskYAMLContent(content string) string {
 		return content
 	}
 
-	// 检查是否是 List 结构，如果是则遍历 items 数组处理每个资源
-	if kind, ok := data["kind"].(string); ok && kind == "List" {
+	// 检查是否是 List 结构（PodList/SecretList 等），如果是则遍历 items 数组处理每个资源
+	if kind, ok := data["kind"].(string); ok && strings.HasSuffix(kind, "List") {
 		if items, ok := data["items"].([]interface{}); ok {
 			for _, item := range items {
 				if itemMap, ok := item.(map[string]interface{}); ok {
@@ -230,75 +235,53 @@ func (f *Filter) filterFields(content string, fields []string, outputFormat stri
 }
 
 // filterJSONFields filters out specified fields from JSON content using sjson.
+// sjson 直接操作 JSON 字符串，无需 unmarshal/marshal，性能优于 encoding/json。
 func (f *Filter) filterJSONFields(content string, fields []string) string {
-	// 解析 JSON
-	var data map[string]interface{}
-	if err := json.Unmarshal([]byte(content), &data); err != nil {
-		// 如果解析失败，返回原始内容
-		return content
-	}
+	result := content
 
-	// 检查是否是 List 结构，如果是则遍历 items 数组处理每个资源
-	if kind, ok := data["kind"].(string); ok && kind == "List" {
-		if items, ok := data["items"].([]interface{}); ok {
-			for _, item := range items {
-				if itemMap, ok := item.(map[string]interface{}); ok {
-					f.filterSingleResourceFields(itemMap, fields)
+	// 检查是否是 List 结构（kind 以 "List" 结尾）
+	kind := gjson.Get(result, "kind").String()
+	if strings.HasSuffix(kind, "List") {
+		// 先删除顶层 metadata 字段（如 PodList 自身的 metadata.resourceVersion）
+		for _, field := range fields {
+			var err error
+			result, err = sjson.Delete(result, field)
+			if err != nil {
+				audit.Debug("[Filter.filterJSONFields] sjson.Delete 顶层字段失败",
+					zap.String("path", field),
+					zap.Error(err))
+			}
+		}
+		// 再删除 items 数组中的每个资源的字段
+		items := gjson.Get(result, "items")
+		if items.IsArray() {
+			for i := range items.Array() {
+				for _, field := range fields {
+					path := "items." + strconv.Itoa(i) + "." + field
+					var err error
+					result, err = sjson.Delete(result, path)
+					if err != nil {
+						audit.Debug("[Filter.filterJSONFields] sjson.Delete 失败",
+							zap.String("path", path),
+							zap.Error(err))
+					}
 				}
 			}
 		}
 	} else {
-		// 单独资源处理
-		f.filterSingleResourceFields(data, fields)
+		// 单资源：直接按路径删除
+		for _, field := range fields {
+			var err error
+			result, err = sjson.Delete(result, field)
+			if err != nil {
+				audit.Debug("[Filter.filterJSONFields] sjson.Delete 失败",
+					zap.String("path", field),
+					zap.Error(err))
+			}
+		}
 	}
 
-	// 序列化回 JSON
-	result, err := json.MarshalIndent(data, "", "  ")
-	if err != nil {
-		return content
-	}
-
-	return string(result)
-}
-
-// filterSingleResourceFields 对单个资源进行字段过滤
-// 优化：使用原地修改，避免不必要的内存分配
-func (f *Filter) filterSingleResourceFields(data map[string]interface{}, fields []string) {
-	// 构建字段路径集合，用于快速查找
-	fieldPaths := make(map[string]bool)
-	for _, field := range fields {
-		fieldPaths[field] = true
-	}
-
-	// 对每个要过滤的字段路径进行移除
-	for field := range fieldPaths {
-		f.removeJSONField(data, strings.Split(field, "."))
-	}
-}
-
-// removeJSONField recursively removes a field from JSON data.
-// 修复：添加深度限制防止栈溢出，并避免不必要的 slice 复制
-func (f *Filter) removeJSONField(data map[string]interface{}, path []string) {
-	if len(path) == 0 {
-		return
-	}
-
-	// 递归深度保护：最大深度 20 层
-	if len(path) > 20 {
-		return
-	}
-
-	key := path[0]
-	if len(path) == 1 {
-		// 到达目标字段，直接删除
-		delete(data, key)
-		return
-	}
-
-	// 继续递归 - 不再复制 slice，直接使用子切片
-	if nested, ok := data[key].(map[string]interface{}); ok {
-		f.removeJSONField(nested, path[1:])
-	}
+	return result
 }
 
 // filterYAMLFields filters out specified fields from YAML content.
@@ -310,8 +293,11 @@ func (f *Filter) filterYAMLFields(content string, fields []string) string {
 		return content
 	}
 
-	// 检查是否是 List 结构，如果是则遍历 items 数组处理每个资源
-	if kind, ok := data["kind"].(string); ok && kind == "List" {
+	// 检查是否是 List 结构（PodList/DeploymentList 等），如果是则遍历 items 数组处理每个资源
+	if kind, ok := data["kind"].(string); ok && strings.HasSuffix(kind, "List") {
+		// 先过滤顶层 metadata（PodList 自身的 metadata 也可能包含 resourceVersion 等字段）
+		f.filterSingleResourceYAMLFields(data, fields)
+		// 再过滤每个 item 的 metadata
 		if items, ok := data["items"].([]interface{}); ok {
 			for _, item := range items {
 				if itemMap, ok := item.(map[string]interface{}); ok {

@@ -74,7 +74,7 @@ type RateLimitConfig struct {
 type MaskingRule struct {
 	Resource   string   `mapstructure:"resource"`
 	Namespaces []string `mapstructure:"namespaces"`
-	Action     string   `mapstructure:"action"` // mask, drop, filter_fields
+	Action     string   `mapstructure:"action"` // mask, drop, filter_fields, strip_defaults
 	Fields     []string `mapstructure:"fields"` // for filter_fields action
 }
 

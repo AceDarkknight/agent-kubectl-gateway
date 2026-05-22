@@ -66,15 +66,22 @@ func (b *Builder) BuildArgs(req *model.ExecutionRequest) []string {
 		args = append(args, "-o", req.Output)
 	}
 
-	if req.Options != nil {
-		// 日志相关参数
-		if req.Verb == "logs" {
-			if req.Options.TailLines > 0 {
-				args = append(args, "--tail", fmt.Sprintf("%d", req.Options.TailLines))
-			}
-			if req.Options.Since != "" {
-				args = append(args, "--since", req.Options.Since)
-			}
+	// 日志相关参数（独立于 Options nil 检查，确保默认值始终注入）
+	if req.Verb == "logs" {
+		// TailLines <= 0 或未指定时回退默认值 --tail 100，不支持全量日志
+		if req.Options != nil && req.Options.TailLines > 0 {
+			args = append(args, "--tail", fmt.Sprintf("%d", req.Options.TailLines))
+		} else {
+			args = append(args, "--tail", "100")
+		}
+		// Since 为空时回退默认值 --since 1h
+		if req.Options != nil && req.Options.Since != "" {
+			args = append(args, "--since", req.Options.Since)
+		} else {
+			args = append(args, "--since", "1h")
+		}
+		// 其他 logs 专属选项
+		if req.Options != nil {
 			if req.Options.Container != "" {
 				args = append(args, "-c", req.Options.Container)
 			}
@@ -85,7 +92,9 @@ func (b *Builder) BuildArgs(req *model.ExecutionRequest) []string {
 				args = append(args, "-p")
 			}
 		}
+	}
 
+	if req.Options != nil {
 		// 限制数量
 		if req.Options.Limit > 0 {
 			args = append(args, "--limit", fmt.Sprintf("%d", req.Options.Limit))

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 
 	"github.com/AceDarkknight/agent-kubectl-gateway/internal/config"
@@ -256,6 +257,46 @@ func TestRateLimitMiddleware(t *testing.T) {
 		middleware := RateLimitMiddleware(-1, -1)
 		if middleware == nil {
 			t.Error("Expected middleware function, got nil")
+		}
+	})
+
+	t.Run("Requests exceeding burst should be rejected", func(t *testing.T) {
+		r := gin.New()
+		r.Use(RateLimitMiddleware(1000, 2))
+		r.GET("/ping", func(c *gin.Context) {
+			c.Status(http.StatusOK)
+		})
+
+		var wg sync.WaitGroup
+		results := make(chan int, 5)
+
+		for i := 0; i < 5; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				req, _ := http.NewRequest(http.MethodGet, "/ping", nil)
+				w := httptest.NewRecorder()
+				r.ServeHTTP(w, req)
+				results <- w.Code
+			}()
+		}
+
+		wg.Wait()
+		close(results)
+
+		tooManyRequests := 0
+		okCount := 0
+		for code := range results {
+			switch code {
+			case http.StatusTooManyRequests:
+				tooManyRequests++
+			case http.StatusOK:
+				okCount++
+			}
+		}
+
+		if tooManyRequests == 0 {
+			t.Fatalf("expected at least one 429 response, got ok=%d tooManyRequests=%d", okCount, tooManyRequests)
 		}
 	})
 }

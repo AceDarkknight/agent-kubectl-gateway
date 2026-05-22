@@ -4,7 +4,12 @@
 BINARY_NAME=agent-kubectl-gateway
 GO=go
 GOFLAGS=-v
-BUILD_DIR=./build
+LDFLAGS=-s -w
+BUILD_DIR=./bin
+
+# 交叉编译参数，可通过 make build GOOS=darwin GOARCH=arm64 覆盖
+GOOS ?= $(shell go env GOOS)
+GOARCH ?= $(shell go env GOARCH)
 
 # Default target
 .PHONY: all
@@ -13,7 +18,7 @@ all: build
 # Build the binary
 .PHONY: build
 build:
-	$(GO) build $(GOFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/agent-kubectl-gateway
+	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -trimpath -a -installsuffix cgo -o $(BUILD_DIR)/$(BINARY_NAME)-$(GOOS)-$(GOARCH) ./cmd/agent-kubectl-gateway
 
 # Run the application
 .PHONY: run
@@ -54,7 +59,8 @@ docker-build:
 .PHONY: help
 help:
 	@echo "Available targets:"
-	@echo "  build        - Build the binary"
+	@echo "  build        - Build the binary (default: current OS/ARCH)"
+	@echo "                 override: make build GOOS=linux GOARCH=arm64"
 	@echo "  run          - Run the application"
 	@echo "  test         - Run tests"
 	@echo "  clean        - Clean build artifacts"

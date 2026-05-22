@@ -58,8 +58,43 @@ rules:
         - "metadata.annotations.kubectl.kubernetes.io/last-applied-configuration"
         - "metadata.managedFields"
         - "metadata.creationTimestamp"
+        - "metadata.generateName"
+        - "metadata.ownerReferences"
+        - "metadata.resourceVersion"
+        - "metadata.uid"
         - "status"
-      description: "过滤掉 kubectl last-applied-configuration 注解、managedFields、creationTimestamp 和 status 字段，减小返回体积"
+      description: "过滤掉 kubectl 注解、managedFields、creationTimestamp、generateName、ownerReferences、resourceVersion、uid 和 status 字段，减小返回体积"
+
+    # 默认值裁剪规则：按资源显式配置，避免配置语义过宽
+    - resource: "pod"
+      namespaces: ["*"]
+      action: "strip_defaults"
+      description: "裁剪 Pod 中的已知默认值（restartPolicy、dnsPolicy、imagePullPolicy 等），不裁剪 admission 注入的 tolerations"
+
+    - resource: "pods"
+      namespaces: ["*"]
+      action: "strip_defaults"
+      description: "裁剪 Pod 列表中的已知默认值（restartPolicy、dnsPolicy、imagePullPolicy 等），不裁剪 admission 注入的 tolerations"
+
+    - resource: "deployment"
+      namespaces: ["*"]
+      action: "strip_defaults"
+      description: "裁剪 Deployment 的 PodTemplateSpec 中已知默认值，不裁剪 admission 注入的 tolerations"
+
+    - resource: "deployments"
+      namespaces: ["*"]
+      action: "strip_defaults"
+      description: "裁剪 Deployment 列表的 PodTemplateSpec 中已知默认值，不裁剪 admission 注入的 tolerations"
+
+    - resource: "statefulset"
+      namespaces: ["*"]
+      action: "strip_defaults"
+      description: "裁剪 StatefulSet 的 PodTemplateSpec 中已知默认值，不裁剪 admission 注入的 tolerations"
+
+    - resource: "statefulsets"
+      namespaces: ["*"]
+      action: "strip_defaults"
+      description: "裁剪 StatefulSet 列表的 PodTemplateSpec 中已知默认值，不裁剪 admission 注入的 tolerations"
 
 # 限流配置
 rate_limit:
