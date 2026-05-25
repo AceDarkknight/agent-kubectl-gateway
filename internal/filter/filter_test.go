@@ -228,6 +228,9 @@ func TestFilterFields(t *testing.T) {
 			outputFormat: "yaml",
 			shouldRemove: true,
 		},
+		// spec.serviceAccount 字段过滤
+		// 注意：lastPart 断言不适用于 spec.serviceAccount（与 serviceAccountName 冲突），
+		// 因此在独立的 TestFilterFields_ServiceAccount 测试中验证。
 	}
 
 	for _, tt := range tests {
@@ -248,6 +251,49 @@ func TestFilterFields(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestFilterFields_ServiceAccount 验证 filter_fields 对 spec.serviceAccount 的过滤。
+// 与 serviceAccountName 共存时，仅删除 serviceAccount，保留 serviceAccountName。
+func TestFilterFields_ServiceAccount(t *testing.T) {
+	cfg := &config.RulesConfig{}
+	filter := NewFilter(cfg)
+
+	t.Run("JSON: spec.serviceAccount removed, serviceAccountName preserved", func(t *testing.T) {
+		content := `{"metadata":{"name":"test-pod"},"spec":{"serviceAccount":"default","serviceAccountName":"default","containers":[{"name":"main"}]}}`
+		result := filter.filterFields(content, []string{"spec.serviceAccount"}, "json")
+
+		if strings.Contains(result, `"serviceAccount":"default"`) {
+			t.Errorf("spec.serviceAccount 应被删除: %s", result)
+		}
+		if !strings.Contains(result, `"serviceAccountName":"default"`) {
+			t.Errorf("serviceAccountName 应保留: %s", result)
+		}
+	})
+
+	t.Run("YAML: spec.serviceAccount removed, serviceAccountName preserved", func(t *testing.T) {
+		content := "metadata:\n  name: test-pod\nspec:\n  serviceAccount: default\n  serviceAccountName: default\n  containers:\n    - name: main"
+		result := filter.filterFields(content, []string{"spec.serviceAccount"}, "yaml")
+
+		if strings.Contains(result, "serviceAccount: default") {
+			t.Errorf("spec.serviceAccount 应被删除: %s", result)
+		}
+		if !strings.Contains(result, "serviceAccountName: default") {
+			t.Errorf("serviceAccountName 应保留: %s", result)
+		}
+	})
+
+	t.Run("JSON List: spec.serviceAccount removed in each item", func(t *testing.T) {
+		content := `{"kind":"PodList","items":[{"metadata":{"name":"pod-1"},"spec":{"serviceAccount":"default","serviceAccountName":"default","containers":[{"name":"main"}]}}]}`
+		result := filter.filterFields(content, []string{"spec.serviceAccount"}, "json")
+
+		if strings.Contains(result, `"serviceAccount":"default"`) {
+			t.Errorf("PodList 中每个 Pod 的 spec.serviceAccount 应被删除: %s", result)
+		}
+		if !strings.Contains(result, `"serviceAccountName":"default"`) {
+			t.Errorf("PodList 中 serviceAccountName 应保留: %s", result)
+		}
+	})
 }
 
 func TestFilterWithRegex(t *testing.T) {

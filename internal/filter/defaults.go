@@ -158,6 +158,14 @@ func (f *Filter) stripPodSpecFromMap(specMap map[string]interface{}) {
 		delete(specMap, "securityContext")
 	}
 
+	// preemptionPolicy: 仅删除默认值 "PreemptLowerPriority"
+	if pp, ok := specMap["preemptionPolicy"].(string); ok && pp == "PreemptLowerPriority" {
+		delete(specMap, "preemptionPolicy")
+	}
+
+	// tolerations: 仅精确删除两条 Kubernetes 默认注入的 toleration
+	stripDefaultTolerations(specMap)
+
 	// containers
 	if containers, ok := specMap["containers"].([]interface{}); ok {
 		for i, c := range containers {
@@ -347,5 +355,73 @@ func isDeploymentResource(resource string) bool {
 // isStatefulSetResource 判断资源是否为 StatefulSet 类型。
 func isStatefulSetResource(resource string) bool {
 	return resource == "statefulset" || resource == "statefulsets"
+}
+
+// stripDefaultTolerations 精确删除 Kubernetes 默认注入的两条 toleration。
+// 这两条 toleration 由 kubelet/apiserver admission 自动注入，不是用户显式配置：
+//   - node.kubernetes.io/not-ready:NoExecute:300
+//   - node.kubernetes.io/unreachable:NoExecute:300
+//
+// 采用全字段精确匹配，只删除完全一致的条目，不会误删用户自定义 toleration。
+func stripDefaultTolerations(specMap map[string]interface{}) {
+	tolerations, ok := specMap["tolerations"].([]interface{})
+	if !ok || len(tolerations) == 0 {
+		return
+	}
+
+	filtered := make([]interface{}, 0, len(tolerations))
+	for _, t := range tolerations {
+		if isDefaultK8sToleration(t) {
+			continue
+		}
+		filtered = append(filtered, t)
+	}
+
+	if len(filtered) == 0 {
+		delete(specMap, "tolerations")
+	} else {
+		specMap["tolerations"] = filtered
+	}
+}
+
+// isDefaultK8sToleration 判断 toleration 是否为 Kubernetes 默认注入的 toleration。
+// 仅精确匹配以下两条：
+//   - {"key":"node.kubernetes.io/not-ready","operator":"Exists","effect":"NoExecute","tolerationSeconds":300}
+//   - {"key":"node.kubernetes.io/unreachable","operator":"Exists","effect":"NoExecute","tolerationSeconds":300}
+func isDefaultK8sToleration(t interface{}) bool {
+	m, ok := t.(map[string]interface{})
+	if !ok {
+		return false
+	}
+
+	effect, _ := m["effect"].(string)
+	if effect != "NoExecute" {
+		return false
+	}
+	operator, _ := m["operator"].(string)
+	if operator != "Exists" {
+		return false
+	}
+	key, _ := m["key"].(string)
+	if key != "node.kubernetes.io/not-ready" && key != "node.kubernetes.io/unreachable" {
+		return false
+	}
+
+	// tolerationSeconds 必须存在且为 300
+	// JSON 反序列化为 float64，YAML 反序列化为 int
+	switch ts := m["tolerationSeconds"].(type) {
+	case float64:
+		if ts != 300 {
+			return false
+		}
+	case int:
+		if ts != 300 {
+			return false
+		}
+	default:
+		return false
+	}
+
+	return true
 }
 

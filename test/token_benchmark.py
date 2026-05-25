@@ -20,30 +20,23 @@ Token 优化效果验证脚本
     pip install tiktoken
 
 用法：
-    # 离线模式：直接调用 kubectl 做优化前后对比
-    # 前提：本机已安装 kubectl 且具备 kubeconfig/集群访问权限
-    export TIKTOKEN_CACHE_DIR=/opt/tiktoken-cache
-    export TOKEN_BENCHMARK_RUNS=3
-    python test/token_benchmark.py
-
-    # API 模式：通过网关 API 获取当前输出的 token 消耗
-    # 前提：网关服务可访问，且已配置好鉴权 Token
+    # 默认模式：保留原有优化前/优化后对比逻辑，但启动前要求网关可访问
     export TIKTOKEN_CACHE_DIR=/opt/tiktoken-cache
     export GATEWAY_BASE_URL=http://localhost:8078
     export GATEWAY_AUTH_TOKEN=your-token
     export TOKEN_BENCHMARK_RUNS=3
-    python test/token_benchmark.py --via-api
+    python test/token_benchmark.py
 
 环境变量：
-    TIKTOKEN_CACHE_DIR     tiktoken 缓存目录（离线主机建议显式设置）
+    TIKTOKEN_CACHE_DIR     tiktoken 缓存目录
     KUBE_NAMESPACE         指定仅测试该命名空间；不设置时自动发现并遍历所有命名空间
     TOKEN_BENCHMARK_RUNS   每个场景重复运行次数（默认值：3）
-    GATEWAY_BASE_URL       API 模式下的网关地址
-    GATEWAY_AUTH_TOKEN     API 模式下的鉴权 Token
+    GATEWAY_BASE_URL       网关地址（启动前用于可用性检查）
+    GATEWAY_AUTH_TOKEN     网关鉴权 Token
 
 说明：
-    - 离线模式会直接调用 kubectl，并模拟“优化前 / 优化后”输出进行 token 对比。
-    - API 模式会调用网关，统计当前服务端真实输出的 token 数与字节数。
+    - 默认行为：先检查网关健康状态；若网关不可用则直接报错退出。
+    - 通过健康检查后，使用“本地 kubectl 原始输出 vs 网关 API 输出”对比逻辑。
     - 对于 get 命令：若未指定 -o json/-o yaml，则保持 kubectl 默认输出行为，不再强制转成 json。
     - 默认行为：先发现集群中所有命名空间，再对每个命名空间分别跑一组场景。
     - 每个命名空间都会覆盖：pod / pods / deployment / deployments / statefulset / statefulsets。
@@ -58,6 +51,10 @@ import time
 from statistics import mean
 import urllib.request
 import urllib.error
+
+
+class GatewayRequestError(RuntimeError):
+    """网关请求失败。"""
 
 # ── 环境变量 ───────────────────────────────────────────
 GATEWAY_URL = os.environ.get("GATEWAY_BASE_URL", "http://localhost:8078")
@@ -142,9 +139,34 @@ def send_structured_request(verb, resource, namespace="", name="",
             data = json.loads(response.read().decode("utf-8"))
             return data
     except urllib.error.HTTPError as e:
-        return {"status": "failed", "stderr": f"HTTP {e.code}: {e.reason}"}
+        response_body = e.read().decode("utf-8", errors="ignore").strip()
+        reason = f"HTTP {e.code}: {e.reason}"
+        if response_body:
+            reason = f"{reason} - {response_body}"
+        raise GatewayRequestError(reason) from e
     except urllib.error.URLError as e:
-        return {"status": "failed", "stderr": str(e.reason)}
+        raise GatewayRequestError(str(e.reason)) from e
+
+
+def ensure_gateway_available():
+    """检查网关健康状态，不可用时直接抛错。"""
+    req = urllib.request.Request(
+        f"{GATEWAY_URL.rstrip('/')}/health",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+        method="GET"
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as response:
+            if response.status != 200:
+                raise GatewayRequestError(f"health check failed: HTTP {response.status}")
+    except urllib.error.HTTPError as e:
+        response_body = e.read().decode("utf-8", errors="ignore").strip()
+        reason = f"health check failed: HTTP {e.code}: {e.reason}"
+        if response_body:
+            reason = f"{reason} - {response_body}"
+        raise GatewayRequestError(reason) from e
+    except urllib.error.URLError as e:
+        raise GatewayRequestError(f"health check failed: {e.reason}") from e
 
 
 # ── 模拟优化前输出（当前 executor 行为） ─────────────────
@@ -316,8 +338,26 @@ def get_via_api(verb: str, resource: str = "", name: str = "",
     if result.get("status") == "success":
         return result.get("stdout", "")
     else:
-        reason = result.get("blocked_reason") or result.get("stderr", "unknown")
-        return f"[ERROR] {result.get('status', 'unknown')}: {reason}"
+        reason = (
+            result.get("blocked_reason")
+            or result.get("stderr")
+            or result.get("stdout")
+            or "unknown"
+        )
+        raise GatewayRequestError(
+            f"{result.get('status', 'unknown')}: {reason}"
+        )
+
+
+def call_gateway_api(params):
+    """从场景参数元组调用网关 API 获取优化后输出。"""
+    verb, resource, name, namespace, output_fmt, tail, since, options = params
+    api_options = dict(options) if options else {}
+    if verb == "logs" and tail > 0:
+        api_options["tail"] = tail
+    if verb == "logs" and since:
+        api_options["since"] = since
+    return get_via_api(verb, resource, name, namespace, output_fmt, api_options)
 
 
 # ── 场景定义 ────────────────────────────────────────────
@@ -585,11 +625,11 @@ def print_summary():
 
 # ── 主流程 ──────────────────────────────────────────────
 
-def run_offline_benchmark():
-    """离线模式：直接调用 kubectl 对比优化前后 token 数。"""
+def run_benchmark():
+    """默认模式：在网关可用前提下执行原有优化前后 token 对比。"""
     target_namespaces = get_target_namespaces()
     print("=" * 80)
-    print("Token 优化效果验证 (离线模式 — 直接调用 kubectl)")
+    print("Token 优化效果验证 (kubectl 原始输出 vs 网关 API 输出)")
     print(f"Token 编码: tiktoken cl100k_base (BPE 精算)")
     if os.environ.get("KUBE_NAMESPACE", "").strip():
         print(f"K8s 命名空间: {target_namespaces[0]} (显式指定)")
@@ -613,24 +653,32 @@ def run_offline_benchmark():
         last_before = ""
         last_after = ""
 
-        for _ in range(runs):
-            before = get_raw_kubectl(*raw_params)
-            after = get_optimized_kubectl(*opt_params)
+        # logs 场景需要先发现 Pod，避免空 name 请求失败
+        effective_raw = raw_params
+        effective_opt = opt_params
+        if raw_params[0] == "logs" and not raw_params[2]:
+            pod_name = find_logs_pod(raw_params[3])
+            if pod_name:
+                effective_raw = (
+                    raw_params[0], raw_params[1], pod_name,
+                    raw_params[3], raw_params[4], raw_params[5], raw_params[6], raw_params[7]
+                )
+                effective_opt = (
+                    opt_params[0], opt_params[1], pod_name,
+                    opt_params[3], opt_params[4], opt_params[5], opt_params[6], opt_params[7]
+                )
+            else:
+                desc += " (无可用Pod)"
+                print(f"{desc:<34} {'N/A':>12} {'N/A':>12} {'—':>8} {runs:>6}")
+                continue
 
-            # 对于 logs 场景，查找一个实际 Pod
-            if raw_params[0] == "logs" and not raw_params[2]:
-                pod_name = find_logs_pod(raw_params[3])
-                if pod_name:
-                    before = get_raw_kubectl(
-                        raw_params[0], raw_params[1], pod_name,
-                        raw_params[3], raw_params[4], raw_params[5], raw_params[6], raw_params[7]
-                    )
-                    after = get_optimized_kubectl(
-                        opt_params[0], opt_params[1], pod_name,
-                        opt_params[3], opt_params[4], opt_params[5], opt_params[6], opt_params[7]
-                    )
-                else:
-                    desc += " (无可用Pod)"
+        for _ in range(runs):
+            before = get_raw_kubectl(*effective_raw)
+            try:
+                after = call_gateway_api(effective_opt)
+            except GatewayRequestError as e:
+                after = ""
+                print(f"    [WARN] 网关请求失败: {e}")
 
             last_before = before
             last_after = after
@@ -709,9 +757,12 @@ def run_offline_benchmark():
 
     ns = os.environ.get("KUBE_NAMESPACE", "default")
 
-    # 断言 1：get pods -o json 优化后应剥离 managedFields
+    # 断言 1：get pods -o json 网关输出应剥离 managedFields
     raw = get_raw_kubectl("get", "pods", "", ns, "json", 0, "", None)
-    opt = get_optimized_kubectl("get", "pods", "", ns, "json", 0, "", None)
+    try:
+        opt = call_gateway_api(("get", "pods", "", ns, "json", 0, "", None))
+    except GatewayRequestError:
+        opt = ""
     if raw and opt:
         has_managed_fields = '"managedFields"' in opt
         # managedFields 也可能出现在 status 里（比如 managedFields 被 status 的 condition 引用），
@@ -732,9 +783,12 @@ def run_offline_benchmark():
     else:
         log_test("get -o json: managedFields 已剥离", False, "无输出数据，kubectl 是否可用？")
 
-    # 断言 2：describe pod 转化为 get json 后 token 应显著减少
+    # 断言 2：describe pod 通过网关后 token 应显著减少
     raw_desc = get_raw_kubectl("describe", "pods", "", ns, "", 0, "", None)
-    opt_desc = get_optimized_kubectl("describe", "pods", "", ns, "", 0, "", None)
+    try:
+        opt_desc = call_gateway_api(("describe", "pods", "", ns, "", 0, "", None))
+    except GatewayRequestError:
+        opt_desc = ""
     if raw_desc and opt_desc:
         tb_desc = count_tokens(raw_desc)
         ta_desc = count_tokens(opt_desc)
@@ -783,10 +837,6 @@ def run_api_benchmark():
 
     for scenario_id, desc, verb, res, name, ns_val, output_fmt, opts in api_scenarios:
         stdout = get_via_api(verb, res, name, ns_val, output_fmt, opts)
-        if stdout.startswith("[ERROR]"):
-            print(f"{scenario_id:<42} {'ERROR':>12} {'—':>12}")
-            print(f"    {stdout}")
-            continue
         tb = count_tokens(stdout)
         size_bytes = len(stdout.encode("utf-8"))
         total_tokens += tb
@@ -808,13 +858,13 @@ def _savings_bar(pct: float, width: int = 10) -> str:
 # ── 入口 ────────────────────────────────────────────────
 
 def main():
-    via_api = "--via-api" in sys.argv
-
-    if via_api:
-        run_api_benchmark()
-    else:
-        if not run_offline_benchmark():
+    try:
+        ensure_gateway_available()
+        if not run_benchmark():
             sys.exit(1)
+    except GatewayRequestError as e:
+        print(f"[ERROR] 网关不可用或请求失败：{e}")
+        sys.exit(1)
 
     sys.exit(0 if test_results["failed"] == 0 else 1)
 

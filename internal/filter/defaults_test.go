@@ -636,4 +636,240 @@ func TestStripDefaults_ContextDependentDNS(t *testing.T) {
 	}
 }
 
+// --- 默认 tolerations 和 preemptionPolicy 测试 ---
+
+// TestStripDefaults_DefaultTolerationsRemoved 验证两条默认 tolerations 被精确删除。
+func TestStripDefaults_DefaultTolerationsRemoved(t *testing.T) {
+	cfg := &config.RulesConfig{}
+	filter := NewFilter(cfg)
+
+	podJSON := `{
+  "kind": "Pod",
+  "metadata": {"name": "test-pod"},
+  "spec": {
+    "dnsPolicy": "ClusterFirst",
+    "restartPolicy": "Always",
+    "tolerations": [
+      {"effect":"NoExecute","key":"node.kubernetes.io/not-ready","operator":"Exists","tolerationSeconds":300},
+      {"effect":"NoExecute","key":"node.kubernetes.io/unreachable","operator":"Exists","tolerationSeconds":300}
+    ],
+    "containers": [{"name":"main","image":"nginx:1.25","imagePullPolicy":"IfNotPresent"}]
+  }
+}`
+
+	result := filter.stripDefaults(podJSON, "json", "pod")
+
+	if strings.Contains(result, `"tolerations"`) {
+		t.Errorf("两条默认 tolerations 全部被删除后 tolerations 字段应不存在: %s", result)
+	}
+	if strings.Contains(result, `"not-ready"`) {
+		t.Errorf("默认 toleration not-ready 应被删除: %s", result)
+	}
+	if strings.Contains(result, `"unreachable"`) {
+		t.Errorf("默认 toleration unreachable 应被删除: %s", result)
+	}
+}
+
+// TestStripDefaults_MixedTolerationsOnlyDefaultRemoved 验证混合 tolerations 场景：
+// 默认的被删除，用户自定义的保留。
+func TestStripDefaults_MixedTolerationsOnlyDefaultRemoved(t *testing.T) {
+	cfg := &config.RulesConfig{}
+	filter := NewFilter(cfg)
+
+	podJSON := `{
+  "kind": "Pod",
+  "metadata": {"name": "test-pod"},
+  "spec": {
+    "tolerations": [
+      {"effect":"NoExecute","key":"node.kubernetes.io/not-ready","operator":"Exists","tolerationSeconds":300},
+      {"effect":"NoSchedule","key":"dedicated","operator":"Equal","value":"gpu"},
+      {"effect":"NoExecute","key":"node.kubernetes.io/unreachable","operator":"Exists","tolerationSeconds":300}
+    ],
+    "containers": [{"name":"main","image":"nginx:1.25"}]
+  }
+}`
+
+	result := filter.stripDefaults(podJSON, "json", "pod")
+
+	if strings.Contains(result, `"not-ready"`) {
+		t.Errorf("默认 toleration not-ready 应被删除: %s", result)
+	}
+	if strings.Contains(result, `"unreachable"`) {
+		t.Errorf("默认 toleration unreachable 应被删除: %s", result)
+	}
+	if !strings.Contains(result, `"dedicated"`) {
+		t.Errorf("用户自定义 toleration dedicated 应保留: %s", result)
+	}
+}
+
+// TestStripDefaults_EtcdStyleTolerationPreserved 验证控制面的宽容 toleration 不被误删。
+// etcd Pod 使用 {"effect":"NoExecute","operator":"Exists"}（无 key，无 tolerationSeconds），
+// 不应被默认 toleration 规则匹配。
+func TestStripDefaults_EtcdStyleTolerationPreserved(t *testing.T) {
+	cfg := &config.RulesConfig{}
+	filter := NewFilter(cfg)
+
+	podJSON := `{
+  "kind": "Pod",
+  "metadata": {"name": "etcd-host75"},
+  "spec": {
+    "tolerations": [{"effect":"NoExecute","operator":"Exists"}],
+    "containers": [{"name":"etcd","image":"kcr.kingdee.com/k8s/etcd:3.5.12-0"}]
+  }
+}`
+
+	result := filter.stripDefaults(podJSON, "json", "pod")
+
+	if !strings.Contains(result, `"tolerations"`) {
+		t.Errorf("etcd 风格 toleration 不应被删除: %s", result)
+	}
+	if !strings.Contains(result, `"operator":"Exists"`) {
+		t.Errorf("etcd 风格 toleration 应保留: %s", result)
+	}
+}
+
+// TestStripDefaults_PreemptLowerPriorityRemoved 验证默认 preemptionPolicy 被删除。
+func TestStripDefaults_PreemptLowerPriorityRemoved(t *testing.T) {
+	cfg := &config.RulesConfig{}
+	filter := NewFilter(cfg)
+
+	podJSON := `{
+  "kind": "Pod",
+  "metadata": {"name": "test-pod"},
+  "spec": {
+    "preemptionPolicy": "PreemptLowerPriority",
+    "priority": 0,
+    "containers": [{"name":"main","image":"nginx:1.25"}]
+  }
+}`
+
+	result := filter.stripDefaults(podJSON, "json", "pod")
+
+	if strings.Contains(result, `"preemptionPolicy"`) {
+		t.Errorf("默认 preemptionPolicy PreemptLowerPriority 应被删除: %s", result)
+	}
+	// priority 0 不是默认值裁剪的范围（由用户决定是否裁剪），应保留
+	if !strings.Contains(result, `"priority":0`) {
+		t.Errorf("priority 字段不在 strip_defaults 裁剪范围，应保留: %s", result)
+	}
+}
+
+// TestStripDefaults_CustomPreemptionPolicyPreserved 验证非默认 preemptionPolicy 保留。
+func TestStripDefaults_CustomPreemptionPolicyPreserved(t *testing.T) {
+	cfg := &config.RulesConfig{}
+	filter := NewFilter(cfg)
+
+	podJSON := `{
+  "kind": "Pod",
+  "metadata": {"name": "test-pod"},
+  "spec": {
+    "preemptionPolicy": "Never",
+    "containers": [{"name":"main","image":"nginx:1.25"}]
+  }
+}`
+
+	result := filter.stripDefaults(podJSON, "json", "pod")
+
+	if !strings.Contains(result, `"preemptionPolicy":"Never"`) {
+		t.Errorf("非默认 preemptionPolicy Never 应保留: %s", result)
+	}
+}
+
+// TestStripDefaults_SystemCriticalPodPreserved 验证 system-node-critical Pod 的字段不被误删。
+func TestStripDefaults_SystemCriticalPodPreserved(t *testing.T) {
+	cfg := &config.RulesConfig{}
+	filter := NewFilter(cfg)
+
+	podJSON := `{
+  "kind": "Pod",
+  "metadata": {"name": "etcd-host75"},
+  "spec": {
+    "preemptionPolicy": "PreemptLowerPriority",
+    "priority": 2000001000,
+    "priorityClassName": "system-node-critical",
+    "tolerations": [{"effect":"NoExecute","operator":"Exists"}],
+    "containers": [{"name":"etcd","image":"kcr.kingdee.com/k8s/etcd:3.5.12-0"}]
+  }
+}`
+
+	result := filter.stripDefaults(podJSON, "json", "pod")
+
+	// 系统关键 Pod 的 preemptionPolicy 虽然也是 PreemptLowerPriority，按当前规则应被删除
+	// tolerations 格式不同（无 key、无 tolerationSeconds），应保留
+	if !strings.Contains(result, `"tolerations"`) {
+		t.Errorf("etcd 风格 toleration 不应被删除: %s", result)
+	}
+	if !strings.Contains(result, `"priorityClassName"`) {
+		t.Errorf("priorityClassName 不在 strip_defaults 裁剪范围，应保留: %s", result)
+	}
+	if !strings.Contains(result, `"priority":2000001000`) {
+		t.Errorf("priority 字段不在 strip_defaults 裁剪范围，应保留: %s", result)
+	}
+}
+
+// TestStripDefaults_YAMLDefaultTolerationsRemoved 验证 YAML 格式的默认 tolerations 也被删除。
+func TestStripDefaults_YAMLDefaultTolerationsRemoved(t *testing.T) {
+	cfg := &config.RulesConfig{}
+	filter := NewFilter(cfg)
+
+	podYAML := `kind: Pod
+metadata:
+  name: test-pod
+spec:
+  dnsPolicy: ClusterFirst
+  restartPolicy: Always
+  tolerations:
+    - effect: NoExecute
+      key: node.kubernetes.io/not-ready
+      operator: Exists
+      tolerationSeconds: 300
+    - effect: NoExecute
+      key: node.kubernetes.io/unreachable
+      operator: Exists
+      tolerationSeconds: 300
+  containers:
+    - name: main
+      image: nginx:1.25
+`
+
+	result := filter.stripDefaults(podYAML, "yaml", "pod")
+
+	if strings.Contains(result, "tolerations") {
+		t.Errorf("YAML 格式的两条默认 tolerations 全部被删除后 tolerations 字段应不存在: %s", result)
+	}
+}
+
+// TestStripDefaults_DeploymentDefaultTolerationsRemoved 验证 Deployment 的 PodTemplateSpec 中默认 tolerations 被删除。
+func TestStripDefaults_DeploymentDefaultTolerationsRemoved(t *testing.T) {
+	cfg := &config.RulesConfig{}
+	filter := NewFilter(cfg)
+
+	deployJSON := `{
+  "kind": "Deployment",
+  "metadata": {"name": "test-deploy"},
+  "spec": {
+    "replicas": 1,
+    "template": {
+      "spec": {
+        "preemptionPolicy": "PreemptLowerPriority",
+        "tolerations": [
+          {"effect":"NoExecute","key":"node.kubernetes.io/not-ready","operator":"Exists","tolerationSeconds":300},
+          {"effect":"NoExecute","key":"node.kubernetes.io/unreachable","operator":"Exists","tolerationSeconds":300}
+        ],
+        "containers": [{"name":"main","image":"nginx:1.25","imagePullPolicy":"IfNotPresent"}]
+      }
+    }
+  }
+}`
+
+	result := filter.stripDefaults(deployJSON, "json", "deployments")
+
+	if strings.Contains(result, `"tolerations"`) {
+		t.Errorf("Deployment 中的默认 tolerations 应被删除: %s", result)
+	}
+	if strings.Contains(result, `"preemptionPolicy"`) {
+		t.Errorf("Deployment 中的默认 preemptionPolicy 应被删除: %s", result)
+	}
+}
+
 

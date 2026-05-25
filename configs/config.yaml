@@ -63,7 +63,8 @@ rules:
         - "metadata.resourceVersion"
         - "metadata.uid"
         - "status"
-      description: "过滤掉 kubectl 注解、managedFields、creationTimestamp、generateName、ownerReferences、resourceVersion、uid 和 status 字段，减小返回体积"
+        - "spec.serviceAccount"
+      description: "过滤掉 kubectl 注解、managedFields、creationTimestamp、generateName、ownerReferences、resourceVersion、uid、status 和 spec.serviceAccount 字段，减小返回体积"
 
     # 默认值裁剪规则：按资源显式配置，避免配置语义过宽
     - resource: "pod"
